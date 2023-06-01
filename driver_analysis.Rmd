@@ -1,0 +1,1303 @@
+---
+title: "DRIVER ANALYSIS"
+author: "Kazimierz Czarnocki"
+date: "May 2023"
+output: html_document
+---
+
+# INTRODUCTION
+
+This note describes an example of driver analysis with a random forest model
+and SHAP values.
+
+### General Description
+
+A company PROTEIN_POWER wants to know the main drivers of consumers' trust.
+Because their marketing is country and brand specific, they would like to
+know drivers for every country x brand split.
+The collected data includes three countries (Germany, France, Sweden) and two brands (A, B).
+
+Based on prior qualitative research, a set of six drivers was selected:
+
+1. It is a healthy snack.
+2. Informs transparently its consumers.
+3. Listens to its consumers.
+4. Has a good reputation.
+5. Is a brand that acts responsibly.
+6. Is committed to sustainability.
+
+Moreover, to control for the brand effect two scales were used:
+
+7. respondent's attachment to brand
+8. respondent's familiarity with brand
+
+It is possible that they are themselves drivers of trust, so they are included
+in the analysis as drivers.
+
+### Structure
+
+This analysis has a following structure:
+
+1. Set-up 
+   * Prepare environment for analysis (load need packages and data sets, set seed, etc.)
+2. Data Exploration
+   * Exploratory data analysis (conditional means, correlations, distributions, etc.)
+3. Decision on modelling approach
+4. Model Fitting
+   * Fit chosen model (details depend on decisions made in the previous step)
+5. Explore results
+6. Recommendations for PROTEIN_POWER
+
+# 1. SET-UP
+
+```{r message=FALSE, warning=FALSE}
+#Load Packages
+library(tidyverse)
+library(corrplot)
+library(ggrepel)
+library(skimr)
+#for rf
+library(ranger)
+library(mlr)
+library(tuneRanger)
+#for shap values
+library(shapviz)
+library(kernelshap)
+library(treeshap)
+
+#Set-up directories
+dir_in  <- file.path(getwd(), "input")
+dir_out <- file.path(getwd(), "output")
+
+#set seed
+set.seed(18534)
+```
+
+Load data
+
+* Data are already in the form needed for driver analysis, so there is no need 
+for data preparation.
+
+```{r}
+data          <- read.csv(file.path(dir_in, "data_drivers.csv"))
+drivers_names <- read.csv(file.path(dir_in, "drivers_names.csv"))
+```
+
+# 2. DATA EXPLORATION
+
+### Sample Sizes
+
+Sample sizes are approximately equal for countries x brands splits.
+
+```{r}
+table(data$brand, data$country)
+```
+
+### Dependent Variable
+
+DV has a lot of high values and only a small number of low values.
+
+```{r}
+table(data$trust)
+```
+
+Analyzing means and standard deviations per country and brand, we see
+that all of them are fairly similar, with a single exception of
+brand B in Germany.
+
+```{r}
+data %>%
+  group_by(country, brand) %>%
+  summarise(mean    = mean(trust),
+            st.dev. = var(trust) ^ .5)
+```
+
+### Independent Variables
+
+As to distributions of independent variables, we can see that:
+
+* There are a lot of mid-responses.
+* There are more positive/high values than negative/low values.
+* Drivers from 1 to 6 have a smaller number of values than drivers 7 and 8.
+* Although drivers from 1 to 6 have fairly similar means and standard deviations,
+their distributions show noticeable differences.
+  * Driver 1 has a relatively high share of values = 4.
+  * Driver 4 has a relatively high share of values = 5.
+  * Driver 6 has a relatively high share of values = 3, consequently a lower mean
+  than others.
+* In driver 8's distribution dominate values close to the middle of the scale,
+while driver 9's has relatively more high values.
+
+
+
+```{r}
+#drivers
+skim(data %>% select(-c(ID, brand, trust, country)))
+```
+
+### Correlations
+
+As to correlation patterns:
+
+* The dependent variable "trust" is fairly correlated with drivers.
+It is good because it means that there is a lot of information in the data.
+* Drivers are strongly correlated.
+* Correlations are stronger for brand "B" than for brand "A".
+* Drivers from 1 to 6 are strongly correlated with each other, although
+driver 6 is slightly falling out.
+* Drivers 7 and 8 are relatively less correlated with both "trust" and other drivers.
+
+Remark:
+
+* All variables in the correlation plot are ordinal. 
+Consequently, the Spearman correlation should be used instead of the Pearson correlation.
+However, they both give similar results. Thus, a more
+popular Pearson correlation was used for simplicity.
+
+```{r echo = FALSE}
+#whole data set
+cor_matrix <- cor(data %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "Whole Data Set",
+  mar=c(0,0,1,0)
+)
+
+#only brand A
+cor_matrix <- cor(data %>% filter(brand == "A") %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "Brand A",
+  mar=c(0,0,1,0)
+)
+
+#only brand B
+cor_matrix <- cor(data %>% filter(brand == "B") %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "Brand B",
+  mar=c(0,0,1,0)
+)
+```
+
+### Conditional Distributions
+
+Given strong correlations, it would be worth having a look at conditional distributions.
+However, given a substantial number of strong correlations, and data splits
+(3 countries x 2 brands), it is more time efficient to omit this step.
+Moreover, we can always return to this step if the chosen model requires it.
+
+# 3. MODELING APPROACH
+
+It is time to list substantive and technical requirements with respect to modelling
+approach:
+
+1. A parsimonious model is preferred.
+   * It makes obtained results easier to compare between data splits.
+   * Measurement is more consistent.
+   * For a single model, it implies a requirement that effects for countries
+   and brands, and their interactions with drivers (if present) are included. 
+2. A feature importance measure should be as simple in interpretation
+as possible. 
+   * Otherwise, it will not be understood by non-technical stakeholders.
+3. Feature importance must be at the split level (country x brand).
+   * Feature importance at lower a level is a plus because it allows for
+   detailed post-analyses.
+4. Due to highly correlated drivers, it is necessary for the model to be able 
+to deal with such data.
+   * Most importantly, highly correlated predictors may result in spurious
+   correlations and numerous other issues that will impact the quality
+   of the estimation for driver analysis.
+5. Due to highly correlated data and ordinal predictors, it is likely that there 
+are interactions and non-linearities. Thus, a model should allow for them.
+
+One of the models that fulfil the listed requirements is a **random forest with regression trees**. The biggest advantage of random forest is that all interactions and non-linearities are automatically modelled (if a data set is large enough), so there is no need to do it manually. Its only drawback is that the model-specific importance measure is calculated only for the whole model. Consequently, it is not available at the split level. We solve it by calculating SHAP values (see Appendix C). Using SHAP values also has the advantage of corroborating our analysis by comparing two different feature importance measures at the level of the whole data set.
+
+Before moving to fitting the model it is important to state modelling details explicitly:
+
+**Overfitting & folds**
+
+Note that there is no need to split into training and testing data sets (i.e., folds). The aim of this analysis is the exploration of patterns in data, not prediction (see Shmueli (2010) for an explanation of this difference).
+
+Moreover, random forests are much less likely to overfit than other models because they are made up of many weak classifiers trained completely independently on entirely different subsets of the training data. For proof, see Appendix A.
+
+**Importance measure**
+
+Random forest outputs model-based feature importance measure.
+For an ensemble of regression trees, it is a mean increase in MSE when a feature is not present is typically used. However, drivers 1-6 and drivers 7-8 have a different number of classes. It may lead to an upward bias in estimating the importance of drivers with a larger number of classes. To avoid this issue, a modified Gini impurity measure (see Nembrini et al. (2018)) is used.
+
+The aforementioned model-based feature importance measure is calculated only for the whole model. Thus, it cannot be used for subsets. Our solution to this problem is to calculate SHAP values. By adding dummy variables for country and brand and calculating SHAP values, we can fit just one model and obtain drivers for any subsample.
+
+Remark:
+
+* It is possible to use a modified MSE importance measure (see Ren et al. (2022)),
+but it is not implemented in the package "ranger", so we ignore this possibility.
+
+**Type of SHAP value**
+
+If SHAP values are used, it is important to explicitly state how they are going to be computed. In the literature, two ways of simulating exclusion are described, an interventional method (true to the model) and an observational method (true to the data). The interventional method does not account for a data structure (e.g., correlation patterns), so it “intervenes” in a data set. The observational method is "true to data" because it reproduces data structure. In particular, it preserves correlations’ patterns.
+
+Unfortunately, the literature does not offer a clear answer under what conditions which method is preferred. Chen et al. (2020) argue that both methods are meaningful when applied in the proper context. The choice between them depends on whether you want attributions that reflect a particular model's behaviour or the correlations in the data.
+
+Because there are no impossible combinations of predictors' values for our data, and our interest is mainly in explaining model behaviour (i.e., in describing how drivers are linked to trust), it seems reasonable to use the interventional method.
+
+For more information on the observational method, see Aas et al. (2021).
+
+# 4. MODEL FITTING
+
+### Data Preparation
+
+Prepare data by adding dummy variables for brands and countries.
+
+The issue of unbalanced dependent variables is ignored. For a short discussion, see Appendix B.
+
+```{r}
+#add dummies
+data_rf <- data %>% 
+  mutate(brand_A    = ifelse(brand=="A",1,0),
+         brand_B    = ifelse(brand=="B",1,0),
+         country_DE = ifelse(country=="DE",1,0),
+         country_FR = ifelse(country=="FR",1,0),
+         country_SE = ifelse(country=="SE",1,0)) %>%
+  as.data.frame() %>%
+  select(-c(ID, brand, country))
+```
+
+### Model Tuning
+
+Next, we need to tune the model to maximize its fit to data. Another advantage of tuning is decreased risk of overfitting. This counter-intuitive advantage happens because the objective of tuning is the maximization of the prediction quality on the OOB sample.
+
+For general discussion on hyperparameters in random forests, their influence on prediction performance and variable importance measures, and their tuning strategies, see Probst, Wright, & Boulesteix (2019).
+
+Remark:
+
+* The higher number of trees, the better. In this analysis, the number of trees in the forest is set at a modest level because the aim is to merely show an example. For the real analysis, increasing the number of trees would be advisable.
+
+```{r message = F, warning = F, eval=FALSE}
+#initial tuning by "tuneRanger"
+task <- makeRegrTask(id = "a", data = data_rf, target = "trust")
+tuned <- tuneRanger(
+  task,
+  measure = list(mse),
+  num.trees = 1000,
+  parameters = list(replace = T),
+  iters = 100
+)
+#select a subset of best performing hyperparameters' combinations
+best_parameters <- tuned$results %>%
+  filter(mse < quantile(mse, probs = (0.1))) %>%
+  arrange(., mse)
+#To find the best stable solution lets estimate each of these models 100 times 
+#and investigate mean and standard deviation of its accuracy.
+mat <- data.frame()
+for (i in 1:length(best_parameters[, 1])) {
+  for (j in 1:50) {
+    a <- ranger(
+      trust ~ .,
+      data = data_rf,
+      replace = T,
+      num.trees = 1000,
+      mtry = best_parameters$mtry[[i]],
+      min.node.size = best_parameters$min.node.size[[i]],
+      sample.fraction = best_parameters$sample.fraction[[i]]
+    )
+    mat[j, i] <- a$prediction.error
+  }
+}
+best_parameters$mean   <- apply(mat, 2, function(x) mean(x))
+best_parameters$st_dev <- apply(mat, 2, function(x) var(x)^.5)
+best_parameters$min    <- apply(mat, 2, function(x) min(x))
+best_parameters$max    <- apply(mat, 2, function(x) max(x))
+```
+
+Let's have a look at the best combinations of hyperparameters:
+
+```{r echo=FALSE, eval=FALSE}
+#let's have a look at the best combinations of hyperparameters
+best_parameters %>%
+  select(-c(exec.time, mse)) %>%
+  arrange(., mean)
+```
+
+Based on the tuning procedure the preferred combination of hyperparameters is:
+
+* mtry = 3
+* minimal node size = 2
+* sample fraction = 0.9
+
+However, small "minimal node size" and high "sample fraction" increase the risk of overfitting (low "mtry" decreases the risk). Consequently, choosing a combination of hyperparameters with negligibly higher mean MSE but with a higher value of "minimal node size" or a lower "sample fraction" seems preferred. It may be seen as a small difference (and most likely is), but it is always worth being on the safer side.
+
+* mtry = 3
+* minimal node size = 2
+* sample fraction = 0.72
+
+### Fit Final Model
+
+Fit the final model that will be used for the driver analysis.
+
+```{r}
+#fit the final model
+ranger_tuned <- ranger(
+  trust ~ .,
+  data = data_rf,
+  replace = T,
+  num.trees = 2000,
+  mtry = 3,
+  min.node.size = 2,
+  sample.fraction = 0.72,
+  importance = "impurity_corrected",
+  classification = F
+)
+```
+
+### Model Quality Check
+
+Let's investigate prediction errors to decide if we are willing to trust
+the model.
+
+First, the OOB (out-of-bag) MSE is `r round(ranger_tuned$prediction.error, digits=2)`,
+and the OOB R squared is close to 60%.
+It is an amazing score for driver analysis, where scores around 20% are standard.
+
+Second, what is the distribution of MSE?
+
+* `r round(sum(ifelse((ranger_tuned$predictions-data$trust)^2<0.5,1,0))/2204*100, digits=2)`%
+of all errors are smaller than 0.5, so they are closer to their observed value
+than other values.
+* `r round(sum(ifelse((ranger_tuned$predictions-data$trust)^2<1.5,1,0))/2204*100, digits=2)`%
+of all errors are smaller than 1.5, so they are closer to their original value
+or a neighbor than other values.
+* `r round(sum(ifelse((ranger_tuned$predictions-data$trust)^2>1.5,1,0))/2204*100, digits=2)`%
+are are bigger than 1.5 and consequently are misleading.
+
+Given that DV is a latent variable, it is really good.
+
+```{r echo = FALSE}
+#error distribution
+data_plot <- (ranger_tuned$predictions-data$trust)^2
+data_plot <- data_plot[data_plot<8]
+hist(data_plot, breaks = seq(from=0, to=8, by=0.2),
+     main = "Histogram of squared errors",
+     xlab = "Squared error")
+```
+
+Third, does it differ per trust value?
+
+Lower trust values have higher means of OOB MSE.
+It is expected given the distribution of DV, but it also means that
+we can trust less in predictions provided for respondents with low DV.
+
+```{r}
+data.frame(
+  trust = data$trust,
+  mse = (ranger_tuned$predictions-data$trust)^2
+) %>%
+  group_by(trust) %>%
+  summarise(mean_mse = mean(mse),
+            std_mse = var(mse)^.5)
+```
+
+### SHAP Values Calculation
+
+For a model like RF, calculating exact SHAP values would be extremely costly, so we can either approximate them or use an algorithm optimized for tree-based models (i.e., "treeshap"). Here we do the latter. For details on SHAP values, see Appendix C.
+
+```{r eval=FALSE}
+#create an object that can be used by "treeshap()"
+model_unified <- ranger.unify(ranger_tuned, data_rf)
+#SHAP values with interactions 
+#SHAP values are the same, only an array with interactions is added
+shap <- treeshap(model_unified, data_rf, interactions = T)
+
+#shapviz objects (will be needed for visualizations later)
+shap_shapviz <- shapviz(shap)
+```
+
+```{r include = FALSE}
+#The code calculating SHAP takes a long time to run
+#so instead we load pre-calculated SHAP values (the result is the same, but
+#in this way we may run the code without waiting).
+shap <- readRDS(file.path(dir_out, "shap_values.RDS"))
+#shapviz objects
+shap_shapviz <- shapviz(shap)
+```
+
+It is worth checking if Shapley values are in line with the model-based feature importance measure. This check is quite important because SHAP values are (by definition) additive, while RF is not. It may lead to serious problems, as Gosiewska & Biecek (2020) described.
+
+```{r echo = FALSE}
+importance_comparison <- data.frame(
+  mean_SHAP = shap$shaps[,-1] %>%
+    abs() %>%
+    apply(., 2, function(x)
+      mean(x)),
+  RF_measure = ranger_tuned$variable.importance
+)
+
+importance_comparison %>%
+  apply(., 2, function(x) x/sum(x)*100) %>%
+  as.data.frame() %>%
+  round(., digits=2) %>%
+  arrange(desc(mean_SHAP))
+```
+
+Please note that both measures are displayed as a % of the column's sum for easier comparison.
+
+As we can see in the table above, there are some minor differences, but the two importance measures are generally quite similar. Moreover, the Person's correlation between the two is `r round(cor(importance_comparison$mean_SHAP, importance_comparison$RF_measure), digits = 2)`, so we can assume that the two measures are similar enough to use SHAP for driver analysis.
+
+Remark:
+
+* An alternative (probably more informative, but also more labour intense)
+is to use ICE plots (for details see Goldstein et al. (2015))
+
+# 5. RESULTS
+
+Results are presented for each split separately, as requested by PROTEIN_POWER.
+
+For each split, three analyses are presented:
+
+1. A two-way plot contrasting a mean driver score with mean absolute SHAP value.
+   * he mean driver score is simply a mean of scores given by respondents. It may be seen as a performance of a given driver. It is expressed as a percentage of the maximum possible value.
+   * Mean absolute SHAP value is an average impact of a driver on trust. It may be seen as the importance of a given driver and is expressed as a % of the total impact of all drivers.
+   * The plot is divided into four quadrants: (1) left-bottom - not important, (2) left-top - not important and overperforming, (3) right-bottom - important and    underperforming, (4) right-top - important and performing as it should
+2. Nonlinearities detection for crucial drivers.
+   * Even if a given driver is characterized as "important and underperforming", it is unclear what actions would be the most efficient for improving it. For example, should the focus be on moving values from 3 to 4 or 4 to 5? This analysis informs such decisions.
+3. Detection of strong interaction effects.
+   * A heat map visualizes the relative sizes of the main and interaction effects. The darker the tile is, the bigger the effect is. The main effects are placed on the diagonal, while interaction effects are off the diagonal. Thus, dark off-diagonal tiles inform us about strong interaction effects that should be further analyzed.
+
+### Germany & Brand A
+
+**Plot**
+
+1. Focus on keeping *reputation* at the present performance level.
+2. Focus on improving *listens*, *health*, *responsible*, *transparency*.
+3. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "DE" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "DE" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Nonlinearities**
+
+* Driver 1 - The biggest gain is to move from {1,2} to 3, and from 3 to 4.
+* Driver 2 - Differences between values are evenly spaced.
+* Driver 3 - The biggest gain is to move from 3 to 4.
+* Driver 5 - Differences between values are evenly spaced.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "DE", brand == "A") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "DE", brand == "A") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+### Germany & Brand B
+
+**Plot**
+
+1. There is no variable that is important and has no room for improvement.
+2. Focus on improving *reputation*, *listens*, *health*, *responsible*, *transparency*.
+3. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "DE" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "DE" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Nonlinearities**
+
+* Driver 1 - The biggest gain is to move from 2 to 3.
+* Driver 2 - Differences between values are evenly spaced.
+* Driver 3 - The biggest gain is to move from {2, 3} to 4.
+* Driver 4 - The biggest gain is to move from {2, 3} to 4.
+* Driver 5 - The biggest gain is to move from 1 to 2, and from 4 to 5.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "DE", brand == "B") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "DE", brand == "B") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+### France & Brand A
+
+**Plot**
+
+1. Focus on keeping *reputation* at the present performance level.
+2. Focus on improving *listens*,  *transparency*.
+3. *health*, and *responsible* are performing well enough for its importance
+3. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "FR" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "FR" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Nonlinearities**
+
+* Driver 2 - The biggest gain is to move from 3 to 4.
+* Driver 3 - The biggest gain is to move from 3 to 4.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "FR", brand == "A") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "FR", brand == "A") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+### France & Brand B
+
+**Plot**
+
+1. Focus on keeping *reputation* at the present performance level.
+2. Focus on improving *listens*, *health*, *responsible*, *transparency*.
+3. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "FR" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "FR" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Non-linearities**
+
+* Driver 1 - The biggest gain is to move from 3 to 4.
+* Driver 2 - The biggest gain is to move from 3 to 4.
+* Driver 3 - The biggest gain is to move from {2, 3} to 4.
+* Driver 5 - The biggest gain is to move from 3 to 4.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "FR", brand == "B") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "FR", brand == "B") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+### Sweden & Brand A
+
+**Plot**
+
+1. Focus on keeping *reputation* at the present performance level.
+2. Focus on improving *listens*.
+3. *health*, *responsible*, *transparency* performs well enough for their importance.
+4. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "SE" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "SE" & brand == "A") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Nonlinearities**
+
+* Driver 3 - Differences between values are evenly spaced.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "SE", brand == "A") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "SE", brand == "A") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+### Sweden & Brand B
+
+**Plot**
+
+1. Focus on keeping *reputation* at the present performance level.
+2. Focus on improving *listens*, *health*, *responsible*.
+3. *transparency*, *attachment* performs well enough for their importance.
+4. Remaining drivers are not important for trust, and consequently may be ignored.
+
+```{r echo=FALSE}
+#mean driver score
+#because drivers have different ranges, we need to scale them
+#otherwise they would not be comparable on a common scale
+mean_value <- data %>%
+  filter(country == "SE" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  apply(., 2, function(x) mean(x)/max(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_value) <- c("driver", "mean_value")
+
+#mean absolute SHAP value
+#they are scaled as a percentage of their sum
+mean_shap <- shap$shaps[,-1] %>%
+  mutate(brand = data$brand,
+         country = data$country) %>%
+  filter(country == "SE" & brand == "B") %>%
+  select(starts_with("driver")) %>%
+  abs() %>%
+  apply(., 2, function(x) mean(x)) %>%
+  as.data.frame() %>%
+  rownames_to_column()
+colnames(mean_shap) <- c("driver", "mean_abs_shap")
+
+mean_shap <- mean_shap %>%
+  transmute(driver = driver,
+    mean_abs_shap = mean_abs_shap/sum(mean_abs_shap)*100)
+
+#data for plot
+data_plot <- full_join(mean_value, mean_shap, by="driver")
+data_plot$names <- drivers_names$short_name
+  
+#create plot
+x_line = (max(data_plot$mean_abs_shap)+min(data_plot$mean_abs_shap))/2
+y_line = (max(data_plot$mean_value)+min(data_plot$mean_value))/2
+ggplot(data = data_plot, aes(x = mean_abs_shap, y = mean_value)) +
+    geom_point(size = 3, colour = "red") +
+    geom_label_repel(aes(label = names),
+                     size = 2.5,
+                     min.segment.length = 0,
+                     fill = "white") +
+    geom_vline(xintercept = x_line, color = 'darkgrey') +
+    geom_hline(yintercept = y_line, color = 'darkgrey') +
+    labs(x = 'Importance', y = "Performance") +
+    theme_classic()
+```
+
+**Nonlinearities**
+
+* Driver 1 - The biggest gain is to move from 3 to 4.
+* Driver 3 - Differences between values are evenly spaced.
+* Driver 5 - The biggest gain is to move from 4 to 5.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "SE", brand == "B") %>%
+  select(ID)
+
+#select data
+shap_shapviz_selected <- shap_shapviz
+shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
+shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+
+#bee swarm plot
+sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
+```
+
+**Interactions**
+
+There are no noteworthy interactions.
+
+```{r echo=FALSE}
+#select IDs
+selected_ID <- data %>%
+  filter(country == "SE", brand == "B") %>%
+  select(ID)
+
+#select needed elements of array
+array_needed <- shap$interactions[,,c(selected_ID$ID)]
+
+#reshape into the matrix and compute absolute values
+array_sum <- matrix(data=0, nrow = 14, ncol = 14)
+for (i in 1:nrow(selected_ID)) {
+  array_needed[,,i] -> a
+  abs(a) -> b
+  array_sum <- array_sum + b
+}
+
+#remove "trust" from matrix
+array_sum <- array_sum[2:9, 2:9]
+
+#multiply elements off diagonal by 2
+#treeshap divides interaction effects by 2 in the aim to output a matrix that
+#sums up to model's output
+d <- matrix(NA, nrow=8, ncol=8)
+for (i in 1:8) {
+  for (j in 1:8) {
+    ifelse(i==j, d[i,j]<-array_sum[i,j], d[i,j]<-array_sum[i,j]*2)
+  }
+}
+#average impact
+data_heatmap <- d/nrow(selected_ID)
+
+#heat map
+heatmap(d, Colv = NA, Rowv = NA, scale="none")
+```
+
+# 6. Recommendations for PROTEIN_POWER
+
+Let's sum up results of the analysis to provide recommendations for PROTEIN_POWER.
+
+**Recommendations for brand A in Germany**
+
+Focus on:
+
+* keeping *reputation* at the present performance level
+* improving *listens*, the most efficient way to do is by moving from 3 to 4.
+* improving *health*, the most efficient way to do is by moving from {1,2} to {3}, and from 3 to 4.
+* improving *responsible*
+* improving *transparency*
+
+**Recommendations for brand B in Germany**
+
+Focus on:
+
+* improving *reputation*, the most efficient way to do is by moving from {2, 3} to 4.
+* improving *listens*, the most efficient way to do is by moving from {2, 3} to 4.
+* improving *health*, the most efficient way to do is by moving from 2 to 3.
+* improving *responsible*, the most efficient way to do is by moving from 1 to 2, and from 4 to 5.
+* improving *transparency*
+
+**Recommendations for brand A in France**
+
+Focus on:
+
+* keeping *reputation* at the present performance level
+* improving *listens*, the most efficient way to do is by moving from 3 to 4.
+* improving *transparency*, the most efficient way to do is by moving from 3 to 4.
+
+**Recommendations for brand B in France**
+
+Focus on:
+
+* keeping *reputation* at the present performance level
+* improving *listens*, the most efficient way to do is by moving from {2, 3} to 4.
+* improving *health*, the most efficient way to do is by moving from 3 to 4.
+* improving *responsible*, the most efficient way to do is by moving from 3 to 4.
+* improving *transparency*, the most efficient way to do is by moving from 3 to 4.
+
+**Recommendations for brand A in Sweden**
+
+Focus on:
+
+* keeping *reputation* at the present performance level
+* improving *listens*
+
+**Recommendations for brand B in Sweden**
+
+Focus on:
+
+* keeping *reputation* at the present performance level
+* improving *listens*
+* improving *health*, the most efficient way to do is by moving from 3 to 4.
+* improving *responsible*, the most efficient way to do is by moving from 4 to 5.
+
+# APPENDIX
+
+### Appendix A: Overfitting & Random Forest
+
+In more formal terms (for more details see Hastie, et al. (2009)):
+
+1. Let $\sigma^2_l(x)$ denote the expected generalization error of an individual 
+randomized model (i.e., a decision tree), and $\frac{1}{M}*\sigma^2(x)=\sum\sigma^2_l(x)$
+  * $l \in {1,...,M}$ denotes model
+2. The variance of the expected generalization error of an ensemble corresponds to:
+$var(x) = \rho(x)*\sigma^2(x)+\frac{1-\rho(x)}{M}*\sigma^2(x)$
+  * $\rho(x)$ denotes the Pearson’s correlation coefficient between the predictions 
+  of two randomized models trained on the same data from two independent seeds.
+3. For large $M$ the variance of the ensemble decreases if $\rho(x)<1$.
+
+### Appendix B: Unbalanced Dependennt Variable in Regression
+
+An unbalance dependent variable is an issue not only for classification
+but also for regression.
+There are simple fixes such as undersampling of majority classes, 
+oversampling of minority classes, or re-weighting.
+More complex  methods, such as synthetic samples (e.g., SMOTE), transfer learning,
+smoothing methods (e.g., LDS, or FDS) are also available.
+However, a proper addressing of the issue of unbalance dependent variable
+requires more than a few code lines.
+Thus, it is ignored in this analysis for the sake of simplicity.
+
+Moreover, it may be argued that unbalanced dependent variable correctly reflects
+the true distribution. Consequently, paying less attention to less numerous
+classes is not a bad thing.
+
+For more details see Yang & Xu (2020) and Yang, et al. (2021).
+
+### Appendix C: SHAP values
+
+to be added
+
+# REFERENCES
+
+1. Aas, K., Jullum, M., & Løland, A. (2021). Explaining individual predictions when features are
+dependent: More accurate approximations to Shapley values. Artificial Intelligence, 298, 103502.
+2. Chen, H., Janizek, J. D., Lundberg, S., & Lee, S.-I. (2020). True to the Model or True to the Data?
+(arXiv:2006.16234). arXiv. 
+3. Goldstein, A., Kapelner, A., Bleich, J., & Pitkin, E. (2015). Peeking inside the black box: Visualizing statistical learning with plots of individual conditional expectation. journal of Computational and Graphical Statistics, 24(1), 44-65.
+4. Gosiewska, A., & Biecek, P. (2019). Do Not Trust Additive Explanations (arXiv:1903.11420). arXiv. http://arxiv.org/abs/1903.11420
+5. Hastie, et al., (2009). Random forests. The elements of statistical learning: Data mining, inference, and prediction, 587-604.
+6. Nembrini, S., Koenig, I. R. & Wright, M. N. (2018). The revival of the Gini Importance? Bioinformatics.
+7. Probst, P., Wright, M. N., & Boulesteix, A. L. (2019). Hyperparameters and tuning strategies for random forest. Wiley Interdisciplinary Reviews: data mining and knowledge discovery, 9(3), e1301.
+8. Ren, J., Zhang, M., Yu, C., & Liu, Z. (2022). Balanced mse for imbalanced visual regression. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 7926-7935).
+9. Shmueli, G. (2010). To Explain or to Predict?. Statistical Science, 25(3), 289-310.
+10. Yang, Y., & Xu, Z. (2020). Rethinking the value of labels for improving class-imbalanced learning. Advances in neural information processing systems, 33, 19290-19301.
+11. Yang, Y., Zha, K., Chen, Y., Wang, H., & Katabi, D. (2021, July). Delving into deep imbalanced regression. In International Conference on Machine Learning (pp. 11842-11851). PMLR.
+
+
+# SESSION INFO
+
+```{r, echo=FALSE}
+sessionInfo()
+```
