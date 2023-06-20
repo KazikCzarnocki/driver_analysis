@@ -154,7 +154,7 @@ Consequently, the Spearman correlation should be used instead of the Pearson cor
 However, they both give similar results. Thus, a more
 popular Pearson correlation was used for simplicity.
 
-```{r echo = FALSE}
+```{r echo = FALSE, figures-side, fig.show="hold", out.width="50%"}
 #whole data set
 cor_matrix <- cor(data %>% select(-c(ID, brand, country)))
 corrplot(
@@ -548,9 +548,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
@@ -667,9 +668,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
@@ -784,9 +786,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
@@ -902,9 +905,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
@@ -1018,9 +1022,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
@@ -1136,9 +1141,10 @@ selected_ID <- data %>%
   select(ID)
 
 #select data
-shap_shapviz_selected <- shap_shapviz
-shap_shapviz_selected$S <- shap_shapviz$S[c(selected_ID$ID),]
-shap_shapviz_selected$X <- shap_shapviz$X[c(selected_ID$ID),]
+shap_shapviz_selected         <- shap_shapviz
+shap_shapviz_selected$S       <- shap_shapviz$S[c(selected_ID$ID), ]
+shap_shapviz_selected$X       <- shap_shapviz$X[c(selected_ID$ID), ]
+shap_shapviz_selected$S_inter <- shap_shapviz$S_inter[c(selected_ID$ID), , ]
 
 #bee swarm plot
 sv_importance(shap_shapviz_selected, kind="beeswarm", show_numbers = TRUE)
