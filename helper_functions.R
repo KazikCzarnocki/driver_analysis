@@ -35,9 +35,6 @@ make_corrplot <-
     )
   }
 
-
-
-
 #' Calculate mean drivers scores for plots.
 #' To facilitate comparability, means are scaled as a % of the highest value.
 #' This makes all plots comparable.
@@ -61,3 +58,41 @@ drivers_for_plot <-
     
     return(scaled_means)
   }
+
+
+#' Title
+#'
+#' @param data: a data set with SHAP values 
+#' @param data2: a data set
+#' @param filter_country: a country used for filtering
+#' @param filter_brand: a brand used for filtering
+#'
+#' @return a data frame, where "driver" contains drivers' names,
+#' and "mean_abs_value" contains mean absolute SHAP value scaled a percentage
+#' of their sum
+shap_for_plots <-
+  function(data, data2, filter_country, filter_brand) {
+    mean_shap <- data %>%
+      mutate(brand = data2$brand,
+             country = data2$country) %>%
+      filter(country == filter_country & brand == filter_brand) %>%
+      select(starts_with("driver")) %>%
+      abs() %>%
+      apply(., 2, function(x)
+        mean(x)) %>%
+      as.data.frame() %>%
+      rownames_to_column()
+    
+    colnames(mean_shap) <- c("driver", "mean_abs_shap")
+    
+    mean_shap <- mean_shap %>%
+      transmute(driver = driver,
+                mean_abs_shap = mean_abs_shap / sum(mean_abs_shap) * 100)
+    
+    return(mean_shap)
+  }
+
+
+
+
+
