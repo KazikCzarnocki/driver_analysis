@@ -470,16 +470,8 @@ For each split, three analyses are presented:
 3. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "DE" & brand == "A") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "DE", "A")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum
@@ -589,16 +581,8 @@ heatmap(d, Colv = NA, Rowv = NA, scale="none")
 3. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "DE" & brand == "B") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "DE", "B")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum
@@ -710,16 +694,8 @@ heatmap(d, Colv = NA, Rowv = NA, scale="none")
 3. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "FR" & brand == "A") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "FR", "A")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum
@@ -827,16 +803,8 @@ heatmap(d, Colv = NA, Rowv = NA, scale="none")
 3. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "FR" & brand == "B") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "FR", "B")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum
@@ -947,16 +915,8 @@ heatmap(d, Colv = NA, Rowv = NA, scale="none")
 4. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "SE" & brand == "A") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "SE", "A")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum
@@ -1064,16 +1024,8 @@ heatmap(d, Colv = NA, Rowv = NA, scale="none")
 4. Remaining drivers are not important for trust, and consequently may be ignored.
 
 ```{r echo=FALSE}
-#mean driver score
-#because drivers have different ranges, we need to scale them
-#otherwise they would not be comparable on a common scale
-mean_value <- data %>%
-  filter(country == "SE" & brand == "B") %>%
-  select(starts_with("driver")) %>%
-  apply(., 2, function(x) mean(x)/max(x)) %>%
-  as.data.frame() %>%
-  rownames_to_column()
-colnames(mean_value) <- c("driver", "mean_value")
+#mean drivers scores scaled as a percentage of max value
+mean_value <- drivers_for_plot(data, "SE", "B")
 
 #mean absolute SHAP value
 #they are scaled as a percentage of their sum

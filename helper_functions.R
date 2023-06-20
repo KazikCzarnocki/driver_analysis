@@ -34,3 +34,30 @@ make_corrplot <-
       mar = c(0, 0, 1, 0)
     )
   }
+
+
+
+
+#' Calculate mean drivers scores for plots.
+#' To facilitate comparability, means are scaled as a % of the highest value.
+#' This makes all plots comparable.
+#'
+#' @param data: a data set
+#' @param filter_country: a country used for filtering
+#' @param filter_brand: a brand used for filtering
+#'
+#' @return: a data frame, where "driver" contains drivers' names,
+#' and "mean_value" contains mean driver value as a percentage of max
+drivers_for_plot <-
+  function(data, filter_country, filter_brand) {
+    scaled_means <- data %>%
+      filter(country == filter_country & brand == filter_brand) %>%
+      select(starts_with("driver")) %>%
+      apply(., 2, function(x) mean(x) / max(x)) %>%
+      as.data.frame() %>%
+      rownames_to_column()
+    
+    colnames(scaled_means) <- c("driver", "mean_value")
+    
+    return(scaled_means)
+  }
