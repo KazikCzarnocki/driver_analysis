@@ -17,19 +17,20 @@ Because their marketing is country and brand specific, they would like to
 know drivers for every country x brand split.
 The collected data includes three countries (Germany, France, Sweden) and two brands (A, B).
 
-Based on prior qualitative research, a set of six drivers was selected:
+Based on prior qualitative research, a set of six drivers was selected
+(short names used for output are in parentheses):
 
-1. It is a healthy snack.
-2. Informs transparently its consumers.
-3. Listens to its consumers.
-4. Has a good reputation.
-5. Is a brand that acts responsibly.
-6. Is committed to sustainability.
+1. It is a healthy snack (health)
+2. Informs transparently its consumers (transparency)
+3. Listens to its consumers (listens)
+4. Has a good reputation (reputation)
+5. Is a brand that acts responsibly (responsible)
+6. Is committed to sustainability (sustainability)
 
 Moreover, to control for the brand effect two scales were used:
 
-7. respondent's attachment to brand
-8. respondent's familiarity with brand
+7. respondent's attachment to brand (attachement)
+8. respondent's familiarity with brand (familiarity)
 
 It is possible that they are themselves drivers of trust, so they are included
 in the analysis as drivers.
@@ -84,6 +85,9 @@ for data preparation.
 ```{r}
 data          <- read.csv(file.path(dir_in, "data_drivers.csv"))
 drivers_names <- read.csv(file.path(dir_in, "drivers_names.csv"))
+
+#set short names for drivers (instead of numbers)
+colnames(data) <- c(colnames(data)[1:4], drivers_names[, 2])
 ```
 
 # 2. DATA EXPLORATION
@@ -121,15 +125,15 @@ As to distributions of independent variables, we can see that:
 
 * There are a lot of mid-responses.
 * There are more positive/high values than negative/low values.
-* Drivers from 1 to 6 have a smaller number of values than drivers 7 and 8.
-* Although drivers from 1 to 6 have fairly similar means and standard deviations,
+* *Attachment* and *Familiarity* have bigger number of values than remaining drivers.
+* Although remaining drivers have fairly similar means and standard deviations,
 their distributions show noticeable differences.
-  * Driver 1 has a relatively high share of values = 4.
-  * Driver 4 has a relatively high share of values = 5.
-  * Driver 6 has a relatively high share of values = 3, consequently a lower mean
+  * *Health* has a relatively high share of values = 4.
+  * *Reputation* has a relatively high share of values = 5.
+  * *Sustainability* has a relatively high share of values = 3, consequently a lower mean
   than others.
-* In driver 8's distribution dominate values close to the middle of the scale,
-while driver 9's has relatively more high values.
+* In *Attachment's* distribution dominate values close to the middle of the scale,
+while *Familiarity's* distribution has relatively more high values.
 
 
 
@@ -145,11 +149,11 @@ As to correlation patterns:
 * The dependent variable "trust" is fairly correlated with drivers.
 It is good because it means that there is a lot of information in the data.
 * Drivers are strongly correlated.
+* Drivers *Attachment* and *Familiarity* are relatively less correlated with both 
+"trust" and other drivers.
 * Correlations are stronger for brand "B" than for brand "A".
-* Correlations are stronger for DE than for FR and SE.
-* Drivers from 1 to 6 are strongly correlated with each other, although
-driver 6 is slightly falling out.
-* Drivers 7 and 8 are relatively less correlated with both "trust" and other drivers.
+* Correlations are stronger for Germany than for France and Sweden.
+
 
 Remark:
 
@@ -222,7 +226,7 @@ Moreover, random forests are much less likely to overfit than other models becau
 **Importance measure**
 
 Random forest outputs model-based feature importance measure.
-For an ensemble of regression trees, it is a mean increase in MSE when a feature is not present is typically used. However, drivers 1-6 and drivers 7-8 have a different number of classes. It may lead to an upward bias in estimating the importance of drivers with a larger number of classes. To avoid this issue, a modified Gini impurity measure (see Nembrini et al. (2018)) is used.
+For an ensemble of regression trees, it is a mean increase in MSE when a feature is not present is typically used. However, drivers 1-6 and drivers 7-8  (i.e., Attachment, Familiarity) have a different number of classes. It may lead to an upward bias in estimating the importance of drivers with a larger number of classes. To avoid this issue, a modified Gini impurity measure (see Nembrini et al. (2018)) is used.
 
 The aforementioned model-based feature importance measure is calculated only for the whole model. Thus, it cannot be used for subsets. Our solution to this problem is to calculate SHAP values. By adding dummy variables for country and brand and calculating SHAP values, we can fit just one model and obtain drivers for any subsample.
 
@@ -444,7 +448,7 @@ As we can see in the table above, there are some minor differences, but the two 
 Remark:
 
 * An alternative (probably more informative, but also more labour intense)
-is to use ICE plots (for details see Goldstein et al. (2015))
+is to use ICE plots (for details see Goldstein et al. (2015)).
 
 # 5. RESULTS
 
