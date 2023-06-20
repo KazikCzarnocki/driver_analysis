@@ -65,6 +65,9 @@ library(shapviz)
 library(kernelshap)
 library(treeshap)
 
+#source functions
+source("helper_functions.R")
+
 #Set-up directories
 dir_in  <- file.path(getwd(), "input")
 dir_out <- file.path(getwd(), "output")
@@ -157,82 +160,22 @@ popular Pearson correlation was used for simplicity.
 
 ```{r echo = FALSE, figures-side, fig.show="hold", out.width="50%"}
 #whole data set
-cor_matrix <- cor(data %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "Whole Data Set",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Whole Data Set", filter = FALSE)
 
 #only brand A
-cor_matrix <- cor(data %>% filter(brand == "A") %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "Brand A",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Brand A", filter = TRUE, variable = brand, value = "A")
 
 #only brand B
-cor_matrix <- cor(data %>% filter(brand == "B") %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "Brand B",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Brand B", filter = TRUE, variable = brand, value = "B")
 
 #only country DE
-cor_matrix <- cor(data %>% filter(country == "DE") %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "country DE",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Country DE", filter = TRUE, variable = country, value = "DE")
 
 #only country FR
-cor_matrix <- cor(data %>% filter(country == "FR") %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "country FR",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Country FR", filter = TRUE, variable = country, value = "FR")
 
 #only country SE
-cor_matrix <- cor(data %>% filter(country == "SE") %>% select(-c(ID, brand, country)))
-corrplot(
-  cor_matrix,
-  type = "full",
-  order = "original",
-  diag = F,
-  addCoef.col = T,
-  number.digits = 2,
-  title = "country SE",
-  mar=c(0,0,1,0)
-)
+make_corrplot(data, title = "Country SE", filter = TRUE, variable = country, value = "SE")
 ```
 
 ### Conditional Distributions
@@ -342,7 +285,7 @@ tuned <- tuneRanger(
 best_parameters <- tuned$results %>%
   filter(mse < quantile(mse, probs = (0.1))) %>%
   arrange(., mse)
-#To find the best stable solution lets estimate each of these models 100 times 
+#To find the best stable solution lets estimate each of these models 50 times 
 #and investigate mean and standard deviation of its accuracy.
 mat <- data.frame()
 for (i in 1:length(best_parameters[, 1])) {
@@ -351,7 +294,7 @@ for (i in 1:length(best_parameters[, 1])) {
       trust ~ .,
       data = data_rf,
       replace = T,
-      num.trees = 1000,
+      num.trees = 2000,
       mtry = best_parameters$mtry[[i]],
       min.node.size = best_parameters$min.node.size[[i]],
       sample.fraction = best_parameters$sample.fraction[[i]]
@@ -396,7 +339,7 @@ ranger_tuned <- ranger(
   trust ~ .,
   data = data_rf,
   replace = T,
-  num.trees = 2000,
+  num.trees = 10000,
   mtry = 3,
   min.node.size = 2,
   sample.fraction = 0.72,
