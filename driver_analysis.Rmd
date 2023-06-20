@@ -143,6 +143,7 @@ As to correlation patterns:
 It is good because it means that there is a lot of information in the data.
 * Drivers are strongly correlated.
 * Correlations are stronger for brand "B" than for brand "A".
+* Correlations are stronger for DE than for FR and SE.
 * Drivers from 1 to 6 are strongly correlated with each other, although
 driver 6 is slightly falling out.
 * Drivers 7 and 8 are relatively less correlated with both "trust" and other drivers.
@@ -191,6 +192,45 @@ corrplot(
   addCoef.col = T,
   number.digits = 2,
   title = "Brand B",
+  mar=c(0,0,1,0)
+)
+
+#only country DE
+cor_matrix <- cor(data %>% filter(country == "DE") %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "country DE",
+  mar=c(0,0,1,0)
+)
+
+#only country FR
+cor_matrix <- cor(data %>% filter(country == "FR") %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "country FR",
+  mar=c(0,0,1,0)
+)
+
+#only country SE
+cor_matrix <- cor(data %>% filter(country == "SE") %>% select(-c(ID, brand, country)))
+corrplot(
+  cor_matrix,
+  type = "full",
+  order = "original",
+  diag = F,
+  addCoef.col = T,
+  number.digits = 2,
+  title = "country SE",
   mar=c(0,0,1,0)
 )
 ```
