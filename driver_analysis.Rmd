@@ -7,7 +7,7 @@ output: html_document
 
 # INTRODUCTION
 
-This note describes an example of driver analysis with a random forest model
+This note describes an example of driver analysis based on the random forest model
 and SHAP values.
 
 ### General Description
@@ -66,7 +66,7 @@ library(shapviz)
 library(kernelshap)
 library(treeshap)
 
-#source functions
+#source project-specific functions
 source("helper_functions.R")
 
 #Set-up directories
@@ -226,7 +226,7 @@ Moreover, random forests are much less likely to overfit than other models becau
 **Importance measure**
 
 Random forest outputs model-based feature importance measure.
-For an ensemble of regression trees, it is a mean increase in MSE when a feature is not present is typically used. However, drivers 1-6 and drivers 7-8  (i.e., Attachment, Familiarity) have a different number of classes. It may lead to an upward bias in estimating the importance of drivers with a larger number of classes. To avoid this issue, a modified Gini impurity measure (see Nembrini et al. (2018)) is used.
+For an ensemble of regression trees, a mean increase in MSE when a feature is not present is typically used. However, drivers 1-6 and drivers 7-8  (i.e., Attachment, Familiarity) have a different number of classes. It may lead to an upward bias in estimating the importance of drivers with a larger number of classes. To avoid this issue, a modified Gini impurity measure (see Nembrini et al. (2018)) is used.
 
 The aforementioned model-based feature importance measure is calculated only for the whole model. Thus, it cannot be used for subsets. Our solution to this problem is to calculate SHAP values. By adding dummy variables for country and brand and calculating SHAP values, we can fit just one model and obtain drivers for any subsample.
 
@@ -277,15 +277,16 @@ Remark:
 
 ```{r message = F, warning = F, eval=FALSE}
 #initial tuning by "tuneRanger"
+#tuneRanger does not allow for importance = "impurity_corrected"
 task <- makeRegrTask(id = "a", data = data_rf, target = "trust")
 tuned <- tuneRanger(
   task,
   measure = list(mse),
   num.trees = 1000,
-  parameters = list(replace = T),
-  iters = 100
+  parameters = list(replace = T, importance = "impurity"),
+  iters = 10
 )
-#select a subset of best performing hyperparameters' combinations
+#select a subset of best performing combinations of hyperparameters
 best_parameters <- tuned$results %>%
   filter(mse < quantile(mse, probs = (0.1))) %>%
   arrange(., mse)
@@ -301,7 +302,9 @@ for (i in 1:length(best_parameters[, 1])) {
       num.trees = 2000,
       mtry = best_parameters$mtry[[i]],
       min.node.size = best_parameters$min.node.size[[i]],
-      sample.fraction = best_parameters$sample.fraction[[i]]
+      sample.fraction = best_parameters$sample.fraction[[i]],
+      importance = "impurity_corrected",
+      classification = F
     )
     mat[j, i] <- a$prediction.error
   }
@@ -427,7 +430,7 @@ It is worth checking if Shapley values are in line with the model-based feature 
 
 ```{r echo = FALSE}
 importance_comparison <- data.frame(
-  mean_SHAP = shap$shaps[,-1] %>%
+  mean_SHAP = shap$shaps[, -1] %>%
     abs() %>%
     apply(., 2, function(x)
       mean(x)),
@@ -435,15 +438,15 @@ importance_comparison <- data.frame(
 )
 
 importance_comparison %>%
-  apply(., 2, function(x) x/sum(x)*100) %>%
+  apply(., 2, function(x) x / sum(x) * 100) %>%
   as.data.frame() %>%
-  round(., digits=2) %>%
+  round(., digits = 2) %>%
   arrange(desc(mean_SHAP))
 ```
 
 Please note that both measures are displayed as a % of the column's sum for easier comparison.
 
-As we can see in the table above, there are some minor differences, but the two importance measures are generally quite similar. Moreover, the Person's correlation between the two is `r round(cor(importance_comparison$mean_SHAP, importance_comparison$RF_measure), digits = 2)`, so we can assume that the two measures are similar enough to use SHAP for driver analysis.
+As we can see in the table above, there are some minor differences, but the two importance measures are generally quite similar. Moreover, the Person's correlation between the two is `r round(cor(importance_comparison$mean_SHAP, importance_comparison$RF_measure), digits = 2)`, so we can assume that the two measures are similar enough to use SHAP values for driver analysis.
 
 Remark:
 
@@ -456,11 +459,11 @@ Results are presented for each split separately, as requested by PROTEIN_POWER.
 
 For each split, three analyses are presented:
 
-1. A two-way plot contrasting a mean driver score with mean absolute SHAP value.
+1. A two-way plot contrasting a mean driver score (performance) with mean absolute SHAP value (importance).
    * he mean driver score is simply a mean of scores given by respondents. It may be seen as a performance of a given driver. It is expressed as a percentage of the maximum possible value.
    * Mean absolute SHAP value is an average impact of a driver on trust. It may be seen as the importance of a given driver and is expressed as a % of the total impact of all drivers.
    * The plot is divided into four quadrants: (1) left-bottom - not important, (2) left-top - not important and overperforming, (3) right-bottom - important and    underperforming, (4) right-top - important and performing as it should
-2. Nonlinearities detection for crucial drivers.
+2. Nonlinearities detection for drivers.
    * Even if a given driver is characterized as "important and underperforming", it is unclear what actions would be the most efficient for improving it. For example, should the focus be on moving values from 3 to 4 or 4 to 5? This analysis informs such decisions.
 3. Detection of strong interaction effects.
    * A heat map visualizes the relative sizes of the main and interaction effects. The darker the tile is, the bigger the effect is. The main effects are placed on the diagonal, while interaction effects are off the diagonal. Thus, dark off-diagonal tiles inform us about strong interaction effects that should be further analyzed.
